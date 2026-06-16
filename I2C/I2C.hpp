@@ -1,5 +1,5 @@
-#ifndef I2C_H
-#define I2C_H
+#ifndef I2C_HPP
+#define I2C_HPP
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -69,4 +69,4 @@ private:
 };
 
 #include "I2C.tpp"
-#endif // I2C_H
+#endif // I2C_HPP
