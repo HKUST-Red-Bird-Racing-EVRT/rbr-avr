@@ -22,7 +22,7 @@ struct I2cTransaction
     uint8_t address;
     I2cMode mode;
     uint8_t length;
-    volatile uint8_t &processed_count;
+    volatile uint8_t processed_count;
     const uint8_t *data;
 };
 
@@ -36,11 +36,11 @@ public:
     constexpr I2C();
 
     bool pushPriority(const I2cTransaction& new_queuer);
-    void setRecurring(const I2cTransaction* new_tape, size);
+    void setRecurring(const I2cTransaction* new_tape, const uint8_t size);
 
     void pump();
 
-    void handleIsr()
+    void handleIsr();
 
 private:
     constexpr void init();
@@ -59,13 +59,21 @@ private:
     volatile uint8_t recurring_size = 0;
 
     // state machine tracking
-    I2cTransaction& active_job;
+    I2cTransaction* active_job = nullptr;
     volatile uint8_t active_index = 0;
     volatile bool active_job_is_priority = false;
     volatile I2cState bus_state = I2cState::Idle;
 
+    enum class RecoveryState: uint8_t
+    {
+        Init = 0,
+        ClockLow = 1,
+        ClockHigh = 2,
+        Stop = 3
+    };
 
-
+    RecoveryState recovery_state;
+    uint8_t recovery_count;
 };
 
 #include "I2C.tpp"
