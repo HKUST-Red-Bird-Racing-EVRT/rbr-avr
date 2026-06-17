@@ -12,7 +12,13 @@ constexpr I2C<BITRATE_KBPS, PRIORITY_SIZE>::I2C()
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE>
 bool I2C<BITRATE_KBPS, PRIORITY_SIZE>::pushPriority(const I2cTransaction &new_queuer)
 {
-    return false;
+    if (((priority_tail + 1) & PRIORITY_MASK) == priority_head)
+    {
+        return false;
+    }
+    priority_tail = ((priority_tail + 1) & PRIORITY_MASK);
+    priority_queue[priority_tail] = new_queuer;
+    return true;
 }
 
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE>
@@ -20,7 +26,9 @@ void I2C<BITRATE_KBPS, PRIORITY_SIZE>::setRecurring(const I2cTransaction *new_ta
 {
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
     {
-        ;
+        recurring_tape = new_tape;
+        recurring_index = 0;
+        recurring_size = size;
     }
 }
 
@@ -66,6 +74,8 @@ void I2C<BITRATE_KBPS, PRIORITY_SIZE>::recoverBus()
     {
     case RecoveryState::Init:
     {
+
+        break;
     }
     }
 }

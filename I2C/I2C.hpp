@@ -64,6 +64,10 @@ private:
     volatile bool active_job_is_priority = false;
     volatile I2cState bus_state = I2cState::Idle;
 
+    // watchdog
+    uint8_t watchdog_count = 0;
+
+    // stuck bus recovery
     enum class RecoveryState: uint8_t
     {
         Init = 0,
@@ -72,8 +76,8 @@ private:
         Stop = 3
     };
 
-    RecoveryState recovery_state;
-    uint8_t recovery_count;
+    RecoveryState recovery_state = RecoveryState::Init;
+    uint8_t recovery_count = 0;
 };
 
 #include "I2C.tpp"
