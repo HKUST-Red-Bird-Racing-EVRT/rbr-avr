@@ -4,7 +4,6 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-
 struct I2cTransaction
 {
     const uint8_t address_and_mode;
@@ -12,17 +11,21 @@ struct I2cTransaction
     uint8_t *data;
 };
 
-template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t WATCHDOG_MAX_COUNT>
+template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 class I2C
 {
     static_assert((PRIORITY_SIZE & (PRIORITY_SIZE - 1)) == 0, "PRIORITY_SIZE must be a strict power of 2!");
     static_assert(PRIORITY_SIZE >= 2, "PRIORITY_SIZE must be at least 2");
+    static_assert((RECURRING_SIZE & (RECURRING_SIZE - 1)) == 0, "RECURRING_SIZE must be a strict power of 2!");
+    static_assert(RECURRING_SIZE >= 2, "RECURRING_SIZE must be at least 2");
 
 public:
     constexpr I2C();
 
     constexpr bool pushPriority(const I2cTransaction &new_queuer);
-    constexpr void setRecurring(const I2cTransaction *new_tape, const uint8_t size);
+    constexpr bool pushPriority(uint8_t address_and_mode, uint8_t length, uint8_t *data);
+    constexpr bool pushRecurring(const I2cTransaction &new_queuer);
+    constexpr bool pushRecurring(uint8_t address_and_mode, uint8_t length, uint8_t *data);
 
     void pump();
 
@@ -32,7 +35,6 @@ private:
     constexpr void init();
     inline void finishIsr();
     void recoverBus();
-    
 
     // priority queue
     I2cTransaction priority_queue[PRIORITY_SIZE];
@@ -40,10 +42,11 @@ private:
     volatile uint8_t priority_read_index = 0;
     static constexpr uint8_t PRIORITY_MASK = PRIORITY_SIZE - 1;
 
-    // recurring tape
-    const I2cTransaction *recurring_tape = nullptr;
-    volatile uint8_t recurring_size = 0;
+    // recurring queue
+    I2cTransaction recurring_queue[RECURRING_SIZE];
+    uint8_t recurring_size = 0;
     volatile uint8_t recurring_index = 0;
+    static constexpr uint8_t RECURRING_MASK = RECURRING_SIZE - 1;
 
     // state machine tracking
     enum class I2cState : uint8_t
@@ -52,8 +55,9 @@ private:
         Busy = 1,
         Hung = 2
     };
+
     I2cTransaction *active_job = nullptr;
-    volatile uint8_t active_index = 0;
+    volatile uint8_t active_byte_index = 0;
     volatile bool active_job_is_priority = false;
     volatile I2cState bus_state = I2cState::Idle;
 
