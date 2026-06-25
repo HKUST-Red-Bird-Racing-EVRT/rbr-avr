@@ -8,9 +8,29 @@ struct I2cTransaction
 {
     const uint8_t address_and_mode;
     const uint8_t length; /**< Stores the length of the data to be written/read. @note For read data, the length stores the length of ACK bytes, i.e. total read byte count - 1.*/
-    uint8_t *data;
+    uint8_t *const data;
+    constexpr I2cTransaction(uint8_t address_and_mode_, uint8_t length_, uint8_t *data_);
 };
 
+/**
+ * @brief I2C Master Driver class template. Provides a high-speed, interrupt-driven I2C master interface with priority and recurring transaction support.
+ * @details This class is designed for AVR microcontrollers and uses the TWI hardware module.
+ * It supports a priority queue for urgent transactions and a recurring queue for periodic tasks.
+ * The driver handles bus recovery in case of stuck conditions and provides a watchdog mechanism to detect bus hangs.
+ * Users create I2cTransaction objects and push them to the driver using pushPriority or pushRecurring.
+ * The priority queue is a ring buffer fifo.
+ * When a new transaction is chosen to be processed, the priority queue always asserts presidence over the recurring queue.
+ * The recurring queue works as a buffer that is flushed in a round-robin fashion, and is only processed when the priority queue is empty.
+ * The driver must be initialized with the init() method before use,
+ * and the pump() method should be called regularly in the main loop to provide a heartbeat for the watchdog, and to kickstart the bus when idle.
+ * The handleIsr() method must be called from the TWI_vect ISR to handle hardware events. See the example for usage.
+ * @attention You must wrap the call to handleIsr() in an ISR(TWI_vect) block, and you must enable global interrupts with sei() before using the driver.
+ *
+ * @tparam BITRATE_KBPS Bitrate in kbps for the I2C bus. Must be achievable for the given CPU frequency, else a static_assert will trigger.
+ * @tparam PRIORITY_SIZE Size of the priority queue. Must be a power of 2 and at least 2.
+ * @tparam RECURRING_SIZE Size of the recurring queue. Must be a power of 2 and at least 2.
+ * @tparam WATCHDOG_MAX_COUNT Maximum count for the watchdog timer before considering the bus hung. This is a measure of how many pump cycles can occur without activity before triggering recovery. If the main loop runs extremely quick, you should set this higher to avoid false positives.
+ */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 class I2C
 {
@@ -22,10 +42,11 @@ class I2C
 public:
     constexpr I2C();
 
-    constexpr bool pushPriority(const I2cTransaction &new_queuer);
-    constexpr bool pushPriority(uint8_t address_and_mode, uint8_t length, uint8_t *data);
+    [[nodiscard]] constexpr bool pushPriority(const I2cTransaction &new_queuer);
+    [[nodiscard]] constexpr bool pushPriority(const uint8_t address_and_mode, const uint8_t length, uint8_t *const data);
+
     constexpr bool pushRecurring(const I2cTransaction &new_queuer);
-    constexpr bool pushRecurring(uint8_t address_and_mode, uint8_t length, uint8_t *data);
+    constexpr bool pushRecurring(const uint8_t address_and_mode, const uint8_t length, uint8_t *const data);
 
     void pump();
 
@@ -34,6 +55,7 @@ public:
 private:
     constexpr void init();
     inline void finishIsr();
+    inline void restartIsr();
     void recoverBus();
 
     // priority queue
