@@ -11,15 +11,25 @@ struct I2cTransaction
 
     union DataUnion
     {
+        constexpr DataUnion(const uint8_t *write_) : write(write_) {}
+        constexpr DataUnion(uint8_t *read_) : read(read_) {}
         const uint8_t *write;
         uint8_t *read;
     } data;
 
-    static constexpr I2cTransaction makeWrite(const uint8_t address, const uint8_t length, const uint8_t *const source);
-    static constexpr I2cTransaction makeRead(const uint8_t address, const uint8_t length, uint8_t *const destination);
+    inline static constexpr I2cTransaction makeWrite(const uint8_t address, const uint8_t length, const uint8_t *const source);
+    inline static constexpr I2cTransaction makeChainedWrite(const uint8_t address, const uint8_t length, const uint8_t *const source);
+    inline static constexpr I2cTransaction makeRead(const uint8_t address, const uint8_t length, uint8_t *const destination);
 
+    static constexpr uint8_t REPEAT_MASK = 0x80;
+    static constexpr uint8_t LENGTH_MASK = ~(REPEAT_MASK);
 private:
-    constexpr I2cTransaction(const uint8_t address_and_mode_, const uint8_t length_, uint8_t *const source);
+    constexpr I2cTransaction(const uint8_t address_and_mode_, const uint8_t length_, uint8_t *const data_);
+
+    constexpr I2cTransaction() : address_and_mode(0), length(0), data(static_cast<uint8_t *const>(nullptr)) {}
+
+    template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
+    friend class I2C;
 };
 
 /**
@@ -62,7 +72,9 @@ public:
     inline void handleIsr();
 
 private:
-    /* ===== Typedefs ===== */
+    // =========================================================================
+    // Typedefs
+    // =========================================================================
     enum class I2cState : uint8_t
     {
         Idle = 0,
@@ -92,33 +104,41 @@ private:
         // slave modes not implemented
     };
 
-    /* ===== Private Methods ===== */
+    // =========================================================================
+    // Private Methods
+    // =========================================================================
+
     constexpr void init();
     inline void finishIsr();
     inline void restartIsr();
     void recoverBus();
 
+    inline void setActiveJob(const I2cTransaction &job, bool is_priority);
+
     // =========================================================================
     // Private Members
-    // =====
+    // =========================================================================
 
     // priority queue
-    I2cTransaction priority_queue[PRIORITY_SIZE];
+    I2cTransaction priority_queue[PRIORITY_SIZE] = {};
     volatile uint8_t priority_write_index = 0;
     volatile uint8_t priority_read_index = 0;
     static constexpr uint8_t PRIORITY_MASK = PRIORITY_SIZE - 1;
 
     // recurring queue
-    I2cTransaction recurring_queue[RECURRING_SIZE];
-    uint8_t recurring_size = 0;
+    I2cTransaction recurring_queue[RECURRING_SIZE] = {};
+    uint8_t recurring_count = 0;
     volatile uint8_t recurring_index = 0;
-    static constexpr uint8_t RECURRING_MASK = RECURRING_SIZE - 1;
+    volatile bool recurring_queue_locked = false;
 
     // state machine tracking
-
-    I2cTransaction *active_job = nullptr;
+    volatile uint8_t active_address_and_mode = 0;
+    volatile uint8_t active_length = 0;
+    volatile bool active_is_chained = false; // repeated start required after this
+    volatile uint8_t *active_data_ptr = nullptr;
+    volatile bool active_is_priority = false;
     volatile uint8_t active_byte_index = 0;
-    volatile bool active_job_is_priority = false;
+    
     volatile I2cState bus_state = I2cState::Idle;
 
     // watchdog
