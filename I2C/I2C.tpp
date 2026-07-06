@@ -13,7 +13,7 @@
  */
 constexpr I2cTransaction::I2cTransaction(const uint8_t address_and_mode_, const uint8_t length_, uint8_t *const data_)
     : address_and_mode(address_and_mode_),
-      length((address_and_mode & 0x01) ? length_ : length_ - 1),
+      length(length_),
       data(data_)
 {
 }
@@ -53,7 +53,6 @@ constexpr I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::
 
 /**
  * @brief Pushes a new priority transaction to the priority queue.
- * @note Overloads exist for both I2cTransaction objects and raw parameters for convenience.
 
  * @param[in] new_queuer new I2cTransaction to be added to the priority queue.
  * @return true if the transaction was successfully added to the queue, false if the queue is full.
@@ -71,6 +70,12 @@ constexpr bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COU
     return true;
 }
 
+/**
+ * @brief Pushes a new recurring transaction to the recurring queue.
+ * 
+ * @param[in] new_queuer new I2cTransaction to be added to the recurring queue.
+ * @return true if the transaction was successfully added to the queue, false if the queue is full.
+ */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 constexpr bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::pushRecurring(const I2cTransaction &new_queuer)
 {
