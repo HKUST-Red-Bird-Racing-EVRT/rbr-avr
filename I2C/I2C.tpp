@@ -18,20 +18,48 @@ constexpr I2cTransaction::I2cTransaction(const uint8_t address_and_mode_, const 
 {
 }
 
+/**
+ * @brief Creates a new I2cTransaction for a write operation.
+ * 
+ * @param address Address of the I2C device to write to (7-bit address).
+ * @param length Number of bytes to write. Must be greater than zero.
+ * @param source Pointer to the source data buffer.
+ * @return The constructed I2cTransaction object for the write operation.
+ */
 inline constexpr I2cTransaction I2cTransaction::makeWrite(const uint8_t address, const uint8_t length, const uint8_t *const source)
 {
     return I2cTransaction(address << 1, length, const_cast<uint8_t *>(source));
 }
 
+/**
+ * @brief Creates a new I2cTransaction for a chained write operation, which enforces a repeated start condition after the write.
+ * 
+ * @param address Address of the I2C device to write to (7-bit address).
+ * @param length Number of bytes to write. Must be greater than zero.
+ * @param source Pointer to the source data buffer.
+ * @return The constructed I2cTransaction object for the chained write operation.
+ */
 inline constexpr I2cTransaction I2cTransaction::makeChainedWrite(const uint8_t address, const uint8_t length, const uint8_t *const source)
 {
     return I2cTransaction(address << 1, length | I2cTransaction::REPEAT_MASK, const_cast<uint8_t *>(source));
 }
 
-
+/**
+ * @brief Function to cause a compilation error if a read transaction is created with a length of zero.
+ */
 extern void __ERROR_I2C_READ_LENGTH_MUST_BE_GREATER_THAN_ZERO__()
     __attribute__((error("I2C read length must be greater than zero!")));
 
+/**
+ * @brief Creates a new I2cTransaction for a read operation.
+ * 
+ * @param address Address of the I2C device to read from (7-bit address).
+ * @param length Number of bytes to read. Must be greater than zero.
+ * @param destination Pointer to the destination buffer where the read data will be stored.
+ * @attention The destination buffer must be large enough to hold the specified number of bytes.
+ * @note If you need to use a repeated start to read from a specific register, use the makeChainedWrite() function to write the register address first, followed by a read transaction.
+ * @return The constructed I2cTransaction object for the read operation.
+ */
 inline constexpr I2cTransaction I2cTransaction::makeRead(const uint8_t address, const uint8_t length, uint8_t *const destination)
 {
     if (__builtin_constant_p(length) && length == 0)
@@ -88,6 +116,10 @@ constexpr bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COU
     return true;
 }
 
+/**
+ * @brief Provides a heartbeat for the I2C driver, checks for bus hangs, and initiates transactions from the queues if the bus is idle.
+ * @attention This function must be called regularly in the main loop to ensure proper operation of the I2C driver, especially for watchdog functionality and to kickstart transactions when the bus is idle.
+ */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::pump()
 {
@@ -222,6 +254,9 @@ inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>
     }
 }
 
+/**
+ * @brief Private helper to initialize the TWI hardware with the specified bitrate and sets up internal state.
+ */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 constexpr void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::init()
 {
@@ -240,6 +275,9 @@ constexpr void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COU
     bus_state = I2cState::Idle;
 }
 
+/**
+ * @brief Private helper to finish the current I2C transaction, choosing the next transaction (if any), and update the internal state.
+ */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::finishIsr()
 {
@@ -283,6 +321,9 @@ inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>
     }
 }
 
+/**
+ * @brief Private helper to restart the current I2C transaction in case of a failure in the middle, e.g. arbitration lost or NACK received.
+ */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::restartIsr()
 {
@@ -290,6 +331,9 @@ inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>
     TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
 }
 
+/**
+ * @brief Private helper to recover the I2C bus in case of a hang or other error condition. This function is called when the watchdog detects that the bus is hung.
+ */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::recoverBus()
 {
@@ -304,6 +348,12 @@ void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::recov
     }
 }
 
+/**
+ * @brief Private helper to set the active job for the I2C transaction. This function updates the internal state of the I2C driver to reflect the current transaction being processed.
+ * @note From a design perspective, the active job struct is separated into its components to save on instructions used on read with offset, especially as the members are used in the ISR directly.
+ * @param job The I2cTransaction to set as the active job.
+ * @param is_priority Whether the active job is from the priority queue (true) or the recurring queue (false).
+ */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::setActiveJob(const I2cTransaction &job, bool is_priority)
 {
