@@ -1,7 +1,16 @@
+/**
+ * @file I2C.tpp
+ * @author Planeson, Red Bird Racing (carson.cpk@proton.me)
+ * @brief Implementation of the I2C class template and I2cTransaction struct.
+ * @version 1.0
+ * @date 2026-07-14
+ * 
+ * @copyright Copyright (c) 2026
+ * 
+ */
+
 #include "I2C.hpp"
 #include <avr/io.h>
-#include <avr/interrupt.h>
-#include <util/atomic.h>
 
 /**
  * @brief Constexpr constructor for I2cTransaction.
@@ -20,7 +29,7 @@ constexpr I2cTransaction::I2cTransaction(const uint8_t address_and_mode_, const 
 
 /**
  * @brief Creates a new I2cTransaction for a write operation.
- * 
+ *
  * @param address Address of the I2C device to write to (7-bit address).
  * @param length Number of bytes to write. Must be greater than zero.
  * @param source Pointer to the source data buffer.
@@ -33,7 +42,8 @@ inline constexpr I2cTransaction I2cTransaction::makeWrite(const uint8_t address,
 
 /**
  * @brief Creates a new I2cTransaction for a chained write operation, which enforces a repeated start condition after the write.
- * 
+ * @note If a chained write is required during runtime, i.e. in the loop, use an atomic block with the two transactions to ensure that read transaction is properly written to the queue before the ISR can fire.
+ *
  * @param address Address of the I2C device to write to (7-bit address).
  * @param length Number of bytes to write. Must be greater than zero.
  * @param source Pointer to the source data buffer.
@@ -52,7 +62,7 @@ extern void __ERROR_I2C_READ_LENGTH_MUST_BE_GREATER_THAN_ZERO__()
 
 /**
  * @brief Creates a new I2cTransaction for a read operation.
- * 
+ *
  * @param address Address of the I2C device to read from (7-bit address).
  * @param length Number of bytes to read. Must be greater than zero.
  * @param destination Pointer to the destination buffer where the read data will be stored.
@@ -93,6 +103,7 @@ constexpr bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COU
     { // queue full
         return false;
     }
+    // update the content first, then update the index, to ensure that the ISR sees a valid transaction when it reads the index
     priority_queue[priority_write_index] = new_queuer;
     priority_write_index = new_write_index;
     return true;
@@ -100,7 +111,7 @@ constexpr bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COU
 
 /**
  * @brief Pushes a new recurring transaction to the recurring queue.
- * 
+ *
  * @param[in] new_queuer new I2cTransaction to be added to the recurring queue.
  * @return true if the transaction was successfully added to the queue, false if the queue is full.
  */
@@ -109,6 +120,11 @@ constexpr bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COU
 {
     if (recurring_queue_locked)
     {
+        return false;
+    }
+    if (recurring_count >= RECURRING_SIZE)
+    { // queue full
+        recurring_queue_locked = true;
         return false;
     }
     recurring_queue[recurring_count] = new_queuer;
@@ -134,13 +150,23 @@ void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::pump(
             setActiveJob(priority_queue[priority_read_index], true);
             // set control register last to prevent another interrupt from not updating active_job
             TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
+            return;
         }
-        else if (recurring_count > 0)
+        
+        if (recurring_queue_flushed)
+        {   // last cycle flushed recurring queue, open up queue for 1 cycle to let instructions in
+            recurring_index = 0;
+            recurring_count = 0;
+            recurring_queue_locked = false;
+            recurring_queue_flushed = false;
+            return;
+        } 
+
+        if (recurring_count > 0)
         { // used to not have any tasks, only have recurring tasks to start
             watchdog_count = 0;
             bus_state = I2cState::Busy;
             setActiveJob(recurring_queue[0], false);
-            ++recurring_index;
             recurring_queue_locked = true;
             TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
         }
@@ -180,11 +206,13 @@ void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::pump(
 }
 
 /**
- * @brief handles the TWI interrupt service routine. Must be called from within the ISR(TWI_vect) block.
+ * @brief handles the TWI interrupt service routine.
+ * @attention Must be called from within the ISR(TWI_vect) block. See example.
  */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
 inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::handleIsr()
 {
+    watchdog_pulsed = true;
     I2cStatus bus_status = static_cast<I2cStatus>(TWSR & 0xF8);
     switch (bus_status)
     {
@@ -225,18 +253,22 @@ inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>
     }
     case I2cStatus::DataReadAck:
     {
+        active_data_ptr[active_byte_index] = TWDR;
+        ++active_byte_index;
         if (active_byte_index < active_length)
         { // next byte still need ACK
-            active_data_ptr[active_byte_index] = TWDR;
-            ++active_byte_index;
             TWCR = (1 << TWINT) | (1 << TWEA) | (1 << TWEN) | (1 << TWIE);
         }
         else
         { // next byte need NACK to end
-            active_data_ptr[active_byte_index] = TWDR;
-            ++active_byte_index;
             TWCR = (1 << TWINT) | (1 << TWEN) | (1 << TWIE);
         }
+        return;
+    }
+    case I2cStatus::DataReadNack:
+    {
+        active_data_ptr[active_byte_index] = TWDR;
+        finishIsr();
         return;
     }
     case I2cStatus::ArbitrationLost:
@@ -244,12 +276,12 @@ inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>
     case I2cStatus::AddressReadNack:
     case I2cStatus::DataSentNack:
     {
-        restartIsr();
+        TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
         return;
     }
-    case I2cStatus::DataReadNack:
+    default:
     {
-        finishIsr();
+        TWCR = (1 << TWINT) | (1 << TWSTO) | (1 << TWEN) | (1 << TWIE);
     }
     }
 }
@@ -288,54 +320,49 @@ inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>
         {
             setActiveJob(priority_queue[priority_read_index], true);
             TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
+            return;
         }
         else if (recurring_queue_locked)
         {
             setActiveJob(recurring_queue[recurring_index], false);
             TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
-        }
-        else
-        {
-            TWCR = (1 << TWINT) | (1 << TWSTO) | (1 << TWEN);
-            bus_state = I2cState::Idle;
+            return;
         }
     }
     else
     {
         recurring_index += 1;
-        if (priority_write_index != priority_read_index)
-        {
-            setActiveJob(priority_queue[priority_read_index], true);
-            TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
-        }
-        else if (recurring_index != recurring_count)
+        if (active_is_chained && recurring_index < recurring_count)
         {
             setActiveJob(recurring_queue[recurring_index], false);
             TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
+            return;
         }
-        else
+        else if (priority_write_index != priority_read_index)
         {
-            TWCR = (1 << TWINT) | (1 << TWSTO) | (1 << TWEN);
-            bus_state = I2cState::Idle;
+            setActiveJob(priority_queue[priority_read_index], true);
+            TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
+            return;
         }
+        else if (recurring_index < recurring_count)
+        {
+            setActiveJob(recurring_queue[recurring_index], false);
+            TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
+            return;
+        }
+        recurring_queue_flushed = true;
     }
-}
 
-/**
- * @brief Private helper to restart the current I2C transaction in case of a failure in the middle, e.g. arbitration lost or NACK received.
- */
-template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
-inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::restartIsr()
-{
-    active_byte_index = 0;
-    TWCR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN) | (1 << TWIE);
+    TWCR = (1 << TWINT) | (1 << TWSTO) | (1 << TWEN);
+    bus_state = I2cState::Idle;
+    return;
 }
 
 /**
  * @brief Private helper to recover the I2C bus in case of a hang or other error condition. This function is called when the watchdog detects that the bus is hung.
  */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
-void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::recoverBus()
+inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::recoverBus()
 {
     return;
     switch (recovery_state)
@@ -355,8 +382,9 @@ void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::recov
  * @param is_priority Whether the active job is from the priority queue (true) or the recurring queue (false).
  */
 template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
-void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::setActiveJob(const I2cTransaction &job, bool is_priority)
+inline void I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::setActiveJob(const I2cTransaction &job, bool is_priority)
 {
+    //Serial.println("Setting active job: address_and_mode = " + String(job.address_and_mode, HEX) + ", length = " + String(job.length) + ", is_priority = " + String(is_priority));
     active_address_and_mode = job.address_and_mode;
     active_length = job.length & I2cTransaction::LENGTH_MASK;
     active_is_chained = job.length & I2cTransaction::REPEAT_MASK;
