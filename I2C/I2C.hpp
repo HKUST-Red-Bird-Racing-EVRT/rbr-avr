@@ -2,7 +2,7 @@
  * @file I2C.hpp
  * @author Planeson, Red Bird Racing (carson.cpk@proton.me)
  * @brief Declaration of the I2C class template and I2cTransaction struct.
- * @version 1.0
+ * @version 1.0.1
  * @date 2026-07-14
  * 
  * @copyright Copyright (c) 2026
@@ -13,6 +13,7 @@
 #define I2C_HPP
 
 #include <avr/io.h>
+#include <avr/interrupt.h>
 
 #pragma GCC push_options
 #pragma GCC optimize("O2", "predictive-commoning", "ipa-cp-clone", "gcse-after-reload")
@@ -77,7 +78,6 @@ class I2C
     static_assert(PRIORITY_SIZE >= 2, "PRIORITY_SIZE must be at least 2");
     static_assert((RECURRING_SIZE & (RECURRING_SIZE - 1)) == 0, "RECURRING_SIZE must be a strict power of 2!");
     static_assert(RECURRING_SIZE >= 2, "RECURRING_SIZE must be at least 2");
-    friend void loop();
 
 public:
     constexpr I2C() __attribute__((optimize("O3")));
@@ -85,6 +85,8 @@ public:
     constexpr bool pushRecurring(const I2cTransaction &new_queuer) __attribute__((optimize("O3")));
     void pump() __attribute__((aligned(2)));
     inline void handleIsr() __attribute__((aligned(2)));
+    inline bool priorityEmpty() __attribute__((optimize("O3")));
+    inline bool recurringLocked() __attribute__((optimize("O3")));
 
 private:
     // =========================================================================

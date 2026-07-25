@@ -2,7 +2,7 @@
  * @file I2C.tpp
  * @author Planeson, Red Bird Racing (carson.cpk@proton.me)
  * @brief Implementation of the I2C class template and I2cTransaction struct.
- * @version 1.0
+ * @version 1.0.1
  * @date 2026-07-14
  * 
  * @copyright Copyright (c) 2026
@@ -41,7 +41,7 @@ inline constexpr I2cTransaction I2cTransaction::makeWrite(const uint8_t address,
 }
 
 /**
- * @brief Creates a new I2cTransaction for a chained write operation, which enforces a repeated start condition after the write.
+ * @brief Creates a new I2cTransaction for a chained write operation, which enforces a repeated start condition after the write. This function is only useful for recurring reads, as it prevents a priority task from interrupting.
  * @note If a chained write is required during runtime, i.e. in the loop, use an atomic block with the two transactions to ensure that read transaction is properly written to the queue before the ISR can fire.
  *
  * @param address Address of the I2C device to write to (7-bit address).
@@ -131,6 +131,29 @@ constexpr bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COU
     ++recurring_count;
     return true;
 }
+
+/**
+ * @brief Checks if the priority queue is empty.
+ * 
+ * @return whether the priority queue is empty
+ */
+template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
+inline bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::priorityEmpty()
+{
+    return priority_write_index == priority_read_index;
+}
+
+/**
+ * @brief Checks if the recurring queue is locked.
+ *
+ * @return whether the recurring queue is locked
+ */
+template <uint16_t BITRATE_KBPS, uint8_t PRIORITY_SIZE, uint8_t RECURRING_SIZE, uint8_t WATCHDOG_MAX_COUNT>
+inline bool I2C<BITRATE_KBPS, PRIORITY_SIZE, RECURRING_SIZE, WATCHDOG_MAX_COUNT>::recurringLocked()
+{
+    return recurring_queue_locked;
+}
+
 
 /**
  * @brief Provides a heartbeat for the I2C driver, checks for bus hangs, and initiates transactions from the queues if the bus is idle.
